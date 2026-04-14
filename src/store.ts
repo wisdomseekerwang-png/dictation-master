@@ -47,62 +47,46 @@ export const generateId = (): string => {
 };
 
 export const parseWords = (text: string): string[] => {
-  // 先按行拆分
-  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
-
-  // 判断是否是"每行一个词/词组"格式（每行内容较短 or 大部分行含英文单词）
-  // 典型格式：
-  //   1. 英文词 中文释义（如 "abandon 放弃"）
-  //   2. 中文词组 + 逗号（如 "肯定地 毫无疑问地,"）
-  //   3. 每行只有一个词（如 "apple"）
-  const isLineFormat = lines.length >= 2;
-
-  if (isLineFormat) {
-    const words: string[] = [];
-    for (const line of lines) {
-      // 跳过明显是错误信息或 JSON 的行
-      if (line.startsWith('{') || line.startsWith('[') || line.includes('error_code') || line.includes('processing')) {
-        continue;
-      }
-      // 去掉行尾的标点
-      const cleanLine = line.replace(/[,，。.;；、！!？?]+$/, '').trim();
-      if (!cleanLine) continue;
-
-      // 如果该行包含空格，尝试识别格式
-      const parts = cleanLine.split(/\s+/);
-      if (parts.length === 0) continue;
-
-      // 检查是否是"英文词 + 中文释义"格式（首词全为英文字母）
-      const firstPart = parts[0];
-      const isFirstEnglish = /^[a-zA-Z'-]+$/.test(firstPart);
-
-      if (isFirstEnglish && parts.length >= 2) {
-        // 英文词，取第一个英文词作为词语
-        words.push(firstPart);
-      } else if (parts.length === 1) {
-        // 单独一个词（中文词组或英文词）
-        if (firstPart.length <= 20) {
-          words.push(firstPart);
-        }
-      } else {
-        // 多个中文部分：取第一个空格前的内容作为词语
-        // 例如 "肯定地 毫无疑问地明确地确定地" -> 取 "肯定地"
-        if (firstPart.length <= 20 && firstPart.length >= 1) {
-          words.push(firstPart);
-        }
-      }
-    }
-
-    // 如果按行解析有结果，返回去重后的词
-    const unique = [...new Set(words)];
-    if (unique.length > 0) return unique;
+  // 统一换行符
+  let normalized = text.replace(/\r?\n/g, '\n');
+  
+  // 检测是否含中文标点（中文繁体词语分隔格式）
+  const hasChinesePunctuation = /[，。、！？；]/.test(normalized);
+  
+  if (hasChinesePunctuation) {
+    // 格式A: 中文标点分隔（如 "肯定地 毫无疑问地明确地确定地,"）
+    // 把中文标点 + 英文逗号都替换为换行，再按行解析
+    normalized = normalized.replace(/[，。、！？；,\s]+/g, '\n');
   }
-
-  // 回退到原来的分隔符拆分模式（用于粘贴导入的情况）
+  
+  const lines = normalized.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  
+  const words: string[] = [];
+  
+  for (const line of lines) {
+    // 跳过明显是错误信息或 JSON 的行
+    if (line.startsWith('{') || line.startsWith('[') || 
+        line.includes('error_code') || line.includes('processing')) {
+      continue;
+    }
+    
+    // 清理标点
+    const word = line.replace(/[，。、！？；,.\s]/g, '').trim();
+    
+    if (word && word.length >= 1 && word.length <= 30) {
+      words.push(word);
+    }
+  }
+  
+  // 如果有结果，返回去重后的词
+  const unique = [...new Set(words)];
+  if (unique.length > 0) return unique;
+  
+  // 回退到原来的分隔符拆分模式
   return text
     .split(/[\n,，、;；\s]+/)
     .map(w => w.trim())
-    .filter(w => w.length > 0 && w.length <= 20 && !w.startsWith('{') && !w.startsWith('['));
+    .filter(w => w.length > 0 && w.length <= 30 && !w.startsWith('{') && !w.startsWith('['));
 };
 
 export const createWordBank = (

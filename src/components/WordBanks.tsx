@@ -5,9 +5,11 @@ import { createWordBank, parseWords, formatDate } from '../store';
 interface WordBanksProps {
   wordBanks: WordBank[];
   onUpdateWordBanks: (wordBanks: WordBank[]) => void;
+  onSync?: () => void;
+  isSyncing?: boolean;
 }
 
-const WordBanks: React.FC<WordBanksProps> = ({ wordBanks, onUpdateWordBanks }) => {
+const WordBanks: React.FC<WordBanksProps> = ({ wordBanks, onUpdateWordBanks, onSync, isSyncing }) => {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importType, setImportType] = useState<'file' | 'paste'>('file');
   const [importName, setImportName] = useState('');
@@ -118,12 +120,23 @@ const WordBanks: React.FC<WordBanksProps> = ({ wordBanks, onUpdateWordBanks }) =
         <div className="p-4 border-b border-slate-100 flex-shrink-0">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-slate-800">我的词库</h2>
-            <button
-              onClick={() => setShowImportModal(true)}
-              className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium btn-touch hover:bg-primaryDark transition-colors"
-            >
-              + 导入词库
-            </button>
+            <div className="flex gap-2">
+              {onSync && (
+                <button
+                  onClick={onSync}
+                  disabled={isSyncing}
+                  className="px-3 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-medium btn-touch hover:bg-slate-200 transition-colors disabled:opacity-50"
+                >
+                  {isSyncing ? '同步中...' : '🔄 同步'}
+                </button>
+              )}
+              <button
+                onClick={() => setShowImportModal(true)}
+                className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium btn-touch hover:bg-primaryDark transition-colors"
+              >
+                + 导入词库
+              </button>
+            </div>
           </div>
           
           {wordBanks.length === 0 ? (

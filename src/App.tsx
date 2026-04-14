@@ -14,78 +14,76 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('wordbank');
   const [dailyNewWords, setDailyNewWords] = useState<Record<string, string[]>>({});
   const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSync, setLastSync] = useState<number>(0);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
-  // 校验并清洗词库数据，过滤掉非正常词语
-  const sanitizeWordBank = useCallback((bank: WordBank): WordBank => {
+  // 校验并清洗词库数据
+  const sanitizeWordBank = (bank: WordBank): WordBank => {
     const cleanWords = (bank.words || []).filter(word => {
       if (typeof word !== 'string') return false;
-      // 过滤 JSON 错误片段
       if (word.startsWith('{') || word.startsWith('[')) return false;
       if (word.includes('error_code') || word.includes('processing')) return false;
-      // 过滤空内容
       if (word.trim().length === 0) return false;
       return true;
     });
     return { ...bank, words: cleanWords, wordCount: cleanWords.length };
-  }, []);
+  };
 
-  // 从服务器加载数据
+  // 从服务器加载并合并数据
   const loadFromServer = useCallback(async () => {
     setIsSyncing(true);
+    setSyncError(null);
     try {
       const serverData = await fetchAllData();
-      console.log('[Sync] Server data received:', serverData);
-      if (serverData) {
-        // 校验词库数据，过滤损坏的词语
-        const cleanWordBanks = (serverData.wordBanks || []).map(sanitizeWordBank);
-        console.log('[Sync] After sanitize, wordBanks count:', cleanWordBanks.length);
-
-        // 合并服务器数据：服务器有数据时优先用服务器数据
-        setState(prev => {
-          // 判断服务器是否有实际数据（词库非空 或 错词非空 或 记录非空）
-          const serverHasData =
-            cleanWordBanks.length > 0 ||
-            (serverData.wrongWords || []).length > 0 ||
-            (serverData.dictationRecords || []).length > 0;
-
-          console.log('[Sync] serverHasData:', serverHasData, 'prev.wordBanks:', prev.wordBanks.length);
-
-          const merged: AppState = {
-            // 服务器有词库数据时用服务器，否则保留本地（本地可能刚导入还没同步）
-            wordBanks: serverHasData ? cleanWordBanks : prev.wordBanks,
-            wrongWords: serverData.wrongWords || prev.wrongWords,
-            dictationRecords: serverData.dictationRecords || prev.dictationRecords,
-            settings: serverData.settings || prev.settings,
-          };
-          // 保存到本地
-          saveState(merged);
-          console.log('[Sync] Merged state saved, wordBanks:', merged.wordBanks.length);
-          return merged;
-        });
-        setDailyNewWords(serverData.dailyNewWords || {});
-        setLastSync(Date.now());
-      } else {
-        console.log('[Sync] No server data received');
+      if (!serverData) {
+        setSyncError('无法连接到服务器');
+        return;
       }
+
+      const cleanWordBanks = (serverData.wordBanks || []).map(sanitizeWordBank);
+      const serverHasData = cleanWordBanks.length > 0 ||
+        (serverData.wrongWords || []).length > 0 ||
+        (serverData.dictationRecords || []).length > 0;
+
+      if (serverHasData) {
+        const merged: AppState = {
+          wordBanks: cleanWordBanks,
+          wrongWords: serverData.wrongWords || [],
+          dictationRecords: serverData.dictationRecords || [],
+          settings: serverData.settings || state.settings,
+        };
+        setState(merged);
+        saveState(merged);
+      }
+
+      setDailyNewWords(serverData.dailyNewWords || {});
+
+      // 同步到服务器（确保本地最新数据上传）
+      await saveAllData({
+        ...(serverHasData ? {
+          wordBanks: cleanWordBanks,
+          wrongWords: serverData.wrongWords || [],
+          dictationRecords: serverData.dictationRecords || [],
+          settings: serverData.settings || state.settings,
+        } : state),
+        dailyNewWords: serverData.dailyNewWords || {},
+      });
     } catch (error) {
-      console.error('[Sync] Failed to load from server:', error);
+      console.error('[Sync] Error:', error);
+      setSyncError('同步失败，请检查网络连接');
     } finally {
       setIsSyncing(false);
     }
-  }, [sanitizeWordBank]);
+  }, [state.settings]);
 
-  // 初始化时从服务器加载
+  // 初始化时加载一次
   useEffect(() => {
     loadFromServer();
-  }, [loadFromServer]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // 保存到本地和服务器
+  // 同步状态到服务器
   const syncToServer = useCallback(async (newState: AppState, newDailyNewWords?: Record<string, string[]>) => {
-    // 先保存到本地
     saveState(newState);
-
-    // 保存到服务器
     try {
       await saveAllData({
         ...newState,
@@ -96,12 +94,10 @@ const App: React.FC = () => {
     }
   }, [dailyNewWords]);
 
-  // 当状态变化时同步
+  // 状态变化时同步到服务器
   useEffect(() => {
-    if (lastSync > 0) {
-      syncToServer(state);
-    }
-  }, [state, syncToServer, lastSync]);
+    syncToServer(state);
+  }, [state, syncToServer]);
 
   // 更新词库（同时保存每日新词记录）
   const updateWordBanks = useCallback((wordBanks: WordBank[]) => {
@@ -218,6 +214,8 @@ const App: React.FC = () => {
           <WordBanks
             wordBanks={state.wordBanks}
             onUpdateWordBanks={updateWordBanks}
+            onSync={loadFromServer}
+            isSyncing={isSyncing}
           />
         );
       case 'wrongwords':

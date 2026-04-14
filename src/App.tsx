@@ -221,11 +221,9 @@ const App: React.FC = () => {
             }}
             onAddRecord={(record) => {
               addDictationRecord(record);
-              // 记录今日听写的新词（非错词部分）
+              // 记录今日听写的所有新词（来自词库的，不含原本就在错词本里的词）
               const wrongWordSet = new Set(state.wrongWords.map(w => w.word));
-              const newWords = record.results
-                .filter(r => !r.correct && !wrongWordSet.has(r.word))
-                .map(r => r.word);
+              const newWords = record.words.filter(w => !wrongWordSet.has(w));
               recordTodayNewWords(newWords);
             }}
             totalWordCount={getTotalWordCount()}

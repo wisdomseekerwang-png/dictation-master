@@ -9,9 +9,7 @@ interface AppData {
   dailyNewWords: Record<string, string[]>;
 }
 
-// 内存存储（Vercel Serverless 函数会冷启动，需要持久化）
-// 使用 KV 存储
-let storage: AppData = {
+const defaultData: AppData = {
   wordBanks: [],
   wrongWords: [],
   dictationRecords: [],
@@ -25,6 +23,38 @@ let storage: AppData = {
   dailyNewWords: {},
 };
 
+// 使用 Upstash Redis 作为持久化存储
+async function getRedisClient() {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+
+  return {
+    get: async (key: string) => {
+      const resp = await fetch(`${url}/get/${key}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await resp.json();
+      if (json.result === null || json.result === undefined) return null;
+      try {
+        return JSON.parse(json.result);
+      } catch {
+        return json.result;
+      }
+    },
+    set: async (key: string, value: any) => {
+      await fetch(`${url}/set/${key}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ value: JSON.stringify(value) }),
+      });
+    },
+  };
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 设置 CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -36,38 +66,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // 尝试使用 Vercel KV
-    let kv: any = null;
-    try {
-      const { createClient } = require('@vercel/kv');
-      kv = createClient({
-        url: process.env.KV_REST_API_URL,
-        token: process.env.KV_REST_API_TOKEN,
-      });
-    } catch (e) {
-      // KV 未配置，使用内存存储
-    }
+    const redis = await getRedisClient();
 
     if (req.method === 'GET') {
-      // 获取数据
-      if (kv) {
-        const data = await kv.get('appData');
-        if (data) {
-          storage = { ...storage, ...data };
+      let data: AppData = { ...defaultData };
+      if (redis) {
+        const stored = await redis.get('dictation-master-data');
+        if (stored) {
+          data = { ...defaultData, ...stored };
         }
       }
-      return res.status(200).json({ success: true, data: storage });
+      return res.status(200).json({ success: true, data });
     }
 
     if (req.method === 'POST') {
-      // 保存数据
       const newData = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-      storage = { ...storage, ...newData };
-      
-      if (kv) {
-        await kv.set('appData', storage);
+
+      // 先读取已有数据再合并，防止覆盖
+      let current: AppData = { ...defaultData };
+      if (redis) {
+        const stored = await redis.get('dictation-master-data');
+        if (stored) {
+          current = { ...defaultData, ...stored };
+        }
+        const merged = { ...current, ...newData };
+        await redis.set('dictation-master-data', merged);
       }
-      
+
       return res.status(200).json({ success: true });
     }
 

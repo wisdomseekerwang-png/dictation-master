@@ -220,9 +220,10 @@ export function selectWordsForDictation(
   }
   
   // 如果词库不够，从今日已听写的词中补充（允许重复）
-  if (result.length < targetCount && todayNewWords.length > 0) {
+  const todayAlreadyDictated = getTodayNewWords(dailyNewWords);
+  if (result.length < targetCount && todayAlreadyDictated.length > 0) {
     const remaining = targetCount - result.length;
-    const shuffled = [...todayNewWords].sort(() => Math.random() - 0.5);
+    const shuffled = [...todayAlreadyDictated].sort(() => Math.random() - 0.5);
     for (let i = 0; i < remaining && i < shuffled.length; i++) {
       if (!usedWords.has(shuffled[i])) {
         result.push(shuffled[i]);

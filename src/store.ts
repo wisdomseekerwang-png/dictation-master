@@ -47,30 +47,56 @@ export const generateId = (): string => {
 };
 
 export const parseWords = (text: string): string[] => {
-  // 把所有换行、中英文标点、空格都替换为统一的分隔符
-  // 支持：句子（按标点拆分）+ 词语（按空格拆分）
-  const normalized = text
-    .replace(/\r?\n/g, '\n')           // 统一换行符
-    .replace(/[，。、！？；,,.!?;]+/g, '\n')  // 中英文标点 -> 换行
-    .replace(/[ \t]+/g, '\n');        // 空格/制表符 -> 换行
-  
-  const lines = normalized.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  
+  // 把所有换行转成空格，再统一处理
+  let normalized = text
+    .replace(/\r?\n/g, ' ')   // 换行 -> 空格（合并多行的句子）
+    .replace(/\s+/g, ' ')      // 多个空格合并为一个
+    .trim();
+
+  // 检测是否有编号句子格式（如 "1. xxx 2. xxx 3. xxx"）
+  // 句子以 "数字." 开头（如 "1. People decorate..."）
+  const sentencePattern = /^(\d+[.)][^.!?]*[.!?]\s*)+$/;
+  const hasNumberedSentences = /\b\d+[.)]\s*[A-Za-z]/.test(normalized);
+
+  if (hasNumberedSentences) {
+    // 格式A: 编号句子（如 "1. People decorate homes... 2. New clothes are worn..."）
+    // 按 "数字." 分割
+    const sentences: string[] = [];
+    // 匹配 "数字." 作为句子开头
+    const regex = /(\d+[.)])\s*([^.!?]*[.!?])/g;
+    let match;
+    while ((match = regex.exec(normalized)) !== null) {
+      const sentence = (match[1] + ' ' + match[2].trim()).trim();
+      if (sentence.length >= 5 && sentence.length <= 200) {
+        sentences.push(sentence);
+      }
+    }
+    if (sentences.length > 0) {
+      return [...new Set(sentences)];
+    }
+  }
+
+  // 格式B: 普通句子（中文标点分隔 or 空格分隔的词语）
+  // 把所有中英文标点、空格替换为统一分隔符
+  const segments = normalized
+    .replace(/[，。、！？；,,.!?;]+/g, '\n')  // 标点 -> 换行
+    .replace(/[ \t]+/g, '\n')                 // 空格 -> 换行
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+
   const words: string[] = [];
-  
-  for (const line of lines) {
+  for (const line of segments) {
     // 跳过明显是错误信息或 JSON 的行
-    if (line.startsWith('{') || line.startsWith('[') || 
+    if (line.startsWith('{') || line.startsWith('[') ||
         line.includes('error_code') || line.includes('processing')) {
       continue;
     }
-    
-    if (line.length >= 1 && line.length <= 50) {
+    if (line.length >= 1 && line.length <= 200) {
       words.push(line);
     }
   }
-  
-  // 返回去重后的词/句
+
   return [...new Set(words)];
 };
 

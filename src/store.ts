@@ -47,17 +47,12 @@ export const generateId = (): string => {
 };
 
 export const parseWords = (text: string): string[] => {
-  // 统一换行符
-  let normalized = text.replace(/\r?\n/g, '\n');
-  
-  // 检测是否含中文标点（中文繁体词语分隔格式）
-  const hasChinesePunctuation = /[，。、！？；]/.test(normalized);
-  
-  if (hasChinesePunctuation) {
-    // 格式A: 中文标点分隔（如 "肯定地 毫无疑问地明确地确定地,"）
-    // 把中文标点 + 英文逗号都替换为换行，再按行解析
-    normalized = normalized.replace(/[，。、！？；,\s]+/g, '\n');
-  }
+  // 把所有换行、中英文标点、空格都替换为统一的分隔符
+  // 支持：句子（按标点拆分）+ 词语（按空格拆分）
+  const normalized = text
+    .replace(/\r?\n/g, '\n')           // 统一换行符
+    .replace(/[，。、！？；,,.!?;]+/g, '\n')  // 中英文标点 -> 换行
+    .replace(/[ \t]+/g, '\n');        // 空格/制表符 -> 换行
   
   const lines = normalized.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   
@@ -70,23 +65,13 @@ export const parseWords = (text: string): string[] => {
       continue;
     }
     
-    // 清理标点
-    const word = line.replace(/[，。、！？；,.\s]/g, '').trim();
-    
-    if (word && word.length >= 1 && word.length <= 30) {
-      words.push(word);
+    if (line.length >= 1 && line.length <= 50) {
+      words.push(line);
     }
   }
   
-  // 如果有结果，返回去重后的词
-  const unique = [...new Set(words)];
-  if (unique.length > 0) return unique;
-  
-  // 回退到原来的分隔符拆分模式
-  return text
-    .split(/[\n,，、;；\s]+/)
-    .map(w => w.trim())
-    .filter(w => w.length > 0 && w.length <= 30 && !w.startsWith('{') && !w.startsWith('['));
+  // 返回去重后的词/句
+  return [...new Set(words)];
 };
 
 export const createWordBank = (

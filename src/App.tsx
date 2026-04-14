@@ -20,9 +20,11 @@ const App: React.FC = () => {
   const sanitizeWordBank = useCallback((bank: WordBank): WordBank => {
     const cleanWords = (bank.words || []).filter(word => {
       if (typeof word !== 'string') return false;
+      // 过滤 JSON 错误片段
       if (word.startsWith('{') || word.startsWith('[')) return false;
       if (word.includes('error_code') || word.includes('processing')) return false;
-      if (word.length === 0 || word.length > 30) return false;
+      // 过滤空内容
+      if (word.trim().length === 0) return false;
       return true;
     });
     return { ...bank, words: cleanWords, wordCount: cleanWords.length };
@@ -33,9 +35,11 @@ const App: React.FC = () => {
     setIsSyncing(true);
     try {
       const serverData = await fetchAllData();
+      console.log('[Sync] Server data received:', serverData);
       if (serverData) {
         // 校验词库数据，过滤损坏的词语
         const cleanWordBanks = (serverData.wordBanks || []).map(sanitizeWordBank);
+        console.log('[Sync] After sanitize, wordBanks count:', cleanWordBanks.length);
 
         // 合并服务器数据：服务器有数据时优先用服务器数据
         setState(prev => {
@@ -44,6 +48,8 @@ const App: React.FC = () => {
             cleanWordBanks.length > 0 ||
             (serverData.wrongWords || []).length > 0 ||
             (serverData.dictationRecords || []).length > 0;
+
+          console.log('[Sync] serverHasData:', serverHasData, 'prev.wordBanks:', prev.wordBanks.length);
 
           const merged: AppState = {
             // 服务器有词库数据时用服务器，否则保留本地（本地可能刚导入还没同步）
@@ -54,13 +60,16 @@ const App: React.FC = () => {
           };
           // 保存到本地
           saveState(merged);
+          console.log('[Sync] Merged state saved, wordBanks:', merged.wordBanks.length);
           return merged;
         });
         setDailyNewWords(serverData.dailyNewWords || {});
         setLastSync(Date.now());
+      } else {
+        console.log('[Sync] No server data received');
       }
     } catch (error) {
-      console.error('Failed to load from server:', error);
+      console.error('[Sync] Failed to load from server:', error);
     } finally {
       setIsSyncing(false);
     }

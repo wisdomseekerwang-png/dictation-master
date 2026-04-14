@@ -23,6 +23,56 @@ const defaultData: AppData = {
   dailyNewWords: {},
 };
 
+// 安全解析 JSON，避免双重编码问题
+function safeParse(raw: any): AppData {
+  if (!raw) return { ...defaultData };
+  
+  // 如果是字符串，尝试解析
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      // 如果解析失败，可能是双重编码，尝试再解析一次
+      try {
+        raw = JSON.parse(raw);
+      } catch {
+        return { ...defaultData };
+      }
+    }
+  }
+
+  // 处理 { value: "{\"...\"}" } 格式的污染数据
+  if (typeof raw === 'object' && raw !== null && raw.value) {
+    try {
+      // 尝试解析 value 字段
+      let inner = raw.value;
+      if (typeof inner === 'string') {
+        inner = JSON.parse(inner);
+      }
+      // 如果 inner 仍然有 value 字段（多重嵌套），递归处理
+      if (inner && typeof inner === 'object' && inner.value) {
+        let deeper = inner.value;
+        if (typeof deeper === 'string') {
+          deeper = JSON.parse(deeper);
+        }
+        inner = deeper;
+      }
+      // 合并默认数据和解析出的数据
+      return { ...defaultData, ...inner };
+    } catch {
+      // value 解析失败，尝试直接使用 raw
+      return { ...defaultData, ...raw };
+    }
+  }
+
+  // 直接合并
+  if (typeof raw === 'object' && raw !== null) {
+    return { ...defaultData, ...raw };
+  }
+
+  return { ...defaultData };
+}
+
 // 使用 Upstash Redis 作为持久化存储
 async function getRedisClient() {
   const url = process.env.UPSTASH_REDIS_REST_URL;
@@ -85,7 +135,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (redis) {
         const stored = await redis.get('dictation-master-data');
         if (stored) {
-          data = { ...defaultData, ...stored };
+          data = safeParse(stored);
         }
       }
       return res.status(200).json({ success: true, data });
@@ -94,12 +144,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'POST') {
       const newData = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
 
-      // 先读取已有数据再合并，防止覆盖
+      // 先读取已有数据，用 safeParse 解开双重编码
       let current: AppData = { ...defaultData };
       if (redis) {
         const stored = await redis.get('dictation-master-data');
         if (stored) {
-          current = { ...defaultData, ...stored };
+          current = safeParse(stored);
         }
         const merged = { ...current, ...newData };
         await redis.set('dictation-master-data', merged);

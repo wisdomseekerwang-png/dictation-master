@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { WordBank, WrongWord, DictationSettings, DictationRecord } from '../types';
-import { selectWordsForDictation, generateId } from '../store';
+import { generateId } from '../store';
+import { selectWordsForDictation, getTodayNewWords } from '../api';
 import { gradeAnswers, performOCR, OCRResult } from '../services/ocr';
 
 interface DictationProps {
@@ -10,6 +11,8 @@ interface DictationProps {
   onAddWrongWord: (word: string) => void;
   onAddRecord: (record: DictationRecord) => void;
   totalWordCount: number;
+  dailyNewWords: Record<string, string[]>;
+  onRecordWord: (word: string) => void;
 }
 
 // 判断词语是中文还是英文
@@ -24,6 +27,8 @@ const Dictation: React.FC<DictationProps> = ({
   onAddWrongWord,
   onAddRecord,
   totalWordCount,
+  dailyNewWords,
+  onRecordWord,
 }) => {
   const [dictationState, setDictationState] = useState<'setup' | 'ready' | 'dictating' | 'complete' | 'upload' | 'grading' | 'manual' | 'result'>('setup');
   const [words, setWords] = useState<string[]>([]);
@@ -108,7 +113,8 @@ const Dictation: React.FC<DictationProps> = ({
       return;
     }
 
-    const selectedWords = selectWordsForDictation(wordBanks, wrongWords, localSettings);
+    // 使用新的选词逻辑：错词优先，新词不重复
+    const selectedWords = selectWordsForDictation(wordBanks, wrongWords, localSettings, dailyNewWords);
     if (selectedWords.length === 0) {
       alert('没有可选的词语');
       return;
@@ -118,7 +124,7 @@ const Dictation: React.FC<DictationProps> = ({
     setCurrentIndex(0);
     setGradingResults([]);
     setDictationState('ready');
-  }, [wordBanks, wrongWords, localSettings, totalWordCount, wrongWords.length]);
+  }, [wordBanks, wrongWords, localSettings, totalWordCount, wrongWords.length, dailyNewWords]);
 
   // 实际开始听写
   const startActualDictation = useCallback(async () => {
@@ -286,6 +292,7 @@ const Dictation: React.FC<DictationProps> = ({
   // ============ 设置页面 ============
   if (dictationState === 'setup') {
     const availableWords = totalWordCount + wrongWords.length;
+    const todayNewWords = getTodayNewWords(dailyNewWords);
 
     return (
       <div className="h-full flex flex-col bg-white overflow-y-auto">
@@ -296,6 +303,11 @@ const Dictation: React.FC<DictationProps> = ({
             <p className="text-slate-500 mt-2">
               共 {availableWords} 个可用词语 | 支持中英文
             </p>
+            {todayNewWords.length > 0 && (
+              <p className="text-amber-600 text-sm mt-1">
+                今日已听写 {todayNewWords.length} 个新词，剩余 {Math.max(0, totalWordCount - todayNewWords.length)} 个新词可听写
+              </p>
+            )}
           </div>
 
           <div className="bg-slate-50 rounded-2xl p-6 space-y-6">

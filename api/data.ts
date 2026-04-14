@@ -34,7 +34,16 @@ async function getRedisClient() {
       const resp = await fetch(`${url}/get/${key}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      if (!resp.ok) {
+        console.error('Redis GET failed:', resp.status, await resp.text());
+        return null;
+      }
       const json = await resp.json();
+      // 检查是否有错误码（Upstash 限流等情况）
+      if (json.error || json.error_code) {
+        console.error('Redis error:', json);
+        return null;
+      }
       if (json.result === null || json.result === undefined) return null;
       try {
         return JSON.parse(json.result);
@@ -43,7 +52,7 @@ async function getRedisClient() {
       }
     },
     set: async (key: string, value: any) => {
-      await fetch(`${url}/set/${key}`, {
+      const resp = await fetch(`${url}/set/${key}`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -51,6 +60,9 @@ async function getRedisClient() {
         },
         body: JSON.stringify({ value: JSON.stringify(value) }),
       });
+      if (!resp.ok) {
+        console.error('Redis SET failed:', resp.status, await resp.text());
+      }
     },
   };
 }

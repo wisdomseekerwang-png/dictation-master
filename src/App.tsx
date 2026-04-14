@@ -16,16 +16,31 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<number>(0);
 
+  // 校验并清洗词库数据，过滤掉非正常词语
+  const sanitizeWordBank = useCallback((bank: WordBank): WordBank => {
+    const cleanWords = (bank.words || []).filter(word => {
+      if (typeof word !== 'string') return false;
+      if (word.startsWith('{') || word.startsWith('[')) return false;
+      if (word.includes('error_code') || word.includes('processing')) return false;
+      if (word.length === 0 || word.length > 30) return false;
+      return true;
+    });
+    return { ...bank, words: cleanWords, wordCount: cleanWords.length };
+  }, []);
+
   // 从服务器加载数据
   const loadFromServer = useCallback(async () => {
     setIsSyncing(true);
     try {
       const serverData = await fetchAllData();
       if (serverData) {
+        // 校验词库数据，过滤损坏的词语
+        const cleanWordBanks = (serverData.wordBanks || []).map(sanitizeWordBank);
+
         // 合并服务器数据
         setState(prev => {
           const merged: AppState = {
-            wordBanks: serverData.wordBanks?.length > 0 ? serverData.wordBanks : prev.wordBanks,
+            wordBanks: cleanWordBanks.length > 0 ? cleanWordBanks : prev.wordBanks,
             wrongWords: serverData.wrongWords || prev.wrongWords,
             dictationRecords: serverData.dictationRecords || prev.dictationRecords,
             settings: serverData.settings || prev.settings,
@@ -42,7 +57,7 @@ const App: React.FC = () => {
     } finally {
       setIsSyncing(false);
     }
-  }, []);
+  }, [sanitizeWordBank]);
 
   // 初始化时从服务器加载
   useEffect(() => {

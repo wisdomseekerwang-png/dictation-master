@@ -37,10 +37,17 @@ const App: React.FC = () => {
         // 校验词库数据，过滤损坏的词语
         const cleanWordBanks = (serverData.wordBanks || []).map(sanitizeWordBank);
 
-        // 合并服务器数据
+        // 合并服务器数据：服务器有数据时优先用服务器数据
         setState(prev => {
+          // 判断服务器是否有实际数据（词库非空 或 错词非空 或 记录非空）
+          const serverHasData =
+            cleanWordBanks.length > 0 ||
+            (serverData.wrongWords || []).length > 0 ||
+            (serverData.dictationRecords || []).length > 0;
+
           const merged: AppState = {
-            wordBanks: cleanWordBanks.length > 0 ? cleanWordBanks : prev.wordBanks,
+            // 服务器有词库数据时用服务器，否则保留本地（本地可能刚导入还没同步）
+            wordBanks: serverHasData ? cleanWordBanks : prev.wordBanks,
             wrongWords: serverData.wrongWords || prev.wrongWords,
             dictationRecords: serverData.dictationRecords || prev.dictationRecords,
             settings: serverData.settings || prev.settings,

@@ -29,16 +29,22 @@ const speechController = {
       clearTimeout(this.timerId);
       this.timerId = null;
     }
-    // 清空语音队列并暂停
+    // 清空语音队列
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
-      window.speechSynthesis.pause();
+      // 不调用 pause()，否则引擎进入暂停状态，下次播放会失败
+      // 如需恢复，用 resume() 即可
     }
   },
 
   reset() {
     this.shouldStop = false;
     this.timerId = null;
+    // 确保语音引擎处于可播放状态
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel(); // 清空残留队列
+      window.speechSynthesis.resume(); // 退出可能的暂停状态
+    }
   },
 
   // 延迟执行，返回是否被 stop 了

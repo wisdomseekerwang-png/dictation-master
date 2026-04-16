@@ -295,16 +295,25 @@ const Dictation: React.FC<DictationProps> = ({
 
   // 停止听写
   const handleStop = useCallback(() => {
+    // 先设置停止标记，防止异步循环继续
+    stoppedRef.current = true;
+
+    // 强制停止所有语音：cancel + pause 双保险
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
+      // 移动端 Safari 上 cancel 可能是异步的，再调用 pause 确保停止
+      window.speechSynthesis.pause();
     }
-    stoppedRef.current = true; // 标记停止，防止异步循环继续
-    setDictationState('setup');
+
+    // 清空状态
     setWords([]);
     setCurrentIndex(0);
     setGradingResults([]);
     setUploadedImage(null);
     setOcrError(null);
+
+    // 立即切回设置界面
+    setDictationState('setup');
   }, []);
 
   // 返回设置页面

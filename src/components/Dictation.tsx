@@ -63,6 +63,24 @@ const isEnglishWord = (word: string): boolean => {
   return /^[a-zA-Z]/.test(word.trim());
 };
 
+// 为词语选择最优语音
+const pickBestVoice = (word: string, voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null => {
+  const langCode = isEnglishWord(word) ? 'en' : 'zh';
+  const scored = voices
+    .filter(v => v.lang.toLowerCase().startsWith(langCode))
+    .map(v => {
+      let score = 0;
+      if (v.localService) score += 50;
+      const name = v.name.toLowerCase();
+      if (!name.includes('google') && !name.includes('microsoft')) score += 30;
+      if (langCode === 'en' && /(?:uk|us|gb).*|zira|ava|samantha/i.test(name)) score += 40;
+      if (/xiaoxiao|xiaoyi|yunyang|kangkang/i.test(name)) score += 40;
+      return { voice: v, score };
+    })
+    .sort((a, b) => b.score - a.score);
+  return scored[0]?.voice || null;
+}
+
 const Dictation: React.FC<DictationProps> = ({
   wordBanks,
   wrongWords,
@@ -116,6 +134,27 @@ const Dictation: React.FC<DictationProps> = ({
         utterance.lang = isEnglishWord(word) ? 'en-US' : 'zh-CN';
         utterance.rate = rate;
         utterance.pitch = 1;
+
+        // 尝试选择最优语音
+        if (window.speechSynthesis) {
+          const voices = window.speechSynthesis.getVoices();
+          if (voices.length > 0) {
+            // 优先用用户选择的语音
+            if (settings.voiceUri) {
+              const selected = voices.find(v => v.voiceURI === settings.voiceUri);
+              if (selected) {
+                utterance.voice = selected;
+              } else {
+                // 回退到最优语音
+                const best = pickBestVoice(word, voices);
+                if (best) utterance.voice = best;
+              }
+            } else {
+              const best = pickBestVoice(word, voices);
+              if (best) utterance.voice = best;
+            }
+          }
+        }
 
         utterance.onend = () => {
           repeatIndex++;

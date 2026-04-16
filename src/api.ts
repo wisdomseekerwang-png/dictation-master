@@ -57,6 +57,7 @@ export interface DictationSettings {
   repeatCount: number;
   intervalTime: number;
   includeWrongWords: boolean;
+  voiceUri?: string;
 }
 
 export interface AppData {

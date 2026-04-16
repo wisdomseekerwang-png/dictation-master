@@ -28,6 +28,7 @@ export interface DictationSettings {
   repeatCount: number;
   intervalTime: number;
   includeWrongWords: boolean;
+  voiceUri?: string; // 选中的语音URI
 }
 
 export type TabType = 'wordbank' | 'wrongwords' | 'dictation' | 'settings' | 'history';

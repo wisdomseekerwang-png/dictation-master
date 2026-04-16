@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DictationSettings } from '../types';
 
 interface SettingsProps {
@@ -19,6 +19,37 @@ const Settings: React.FC<SettingsProps> = ({
   recordCount,
 }) => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [testVoice, setTestVoice] = useState<string>('');
+
+  // 加载可用语音
+  useEffect(() => {
+    const loadVoices = () => {
+      if (window.speechSynthesis) {
+        const allVoices = window.speechSynthesis.getVoices();
+        setVoices(allVoices.filter(v => v.lang.startsWith('zh') || v.lang.startsWith('en')));
+      }
+    };
+    loadVoices();
+    window.speechSynthesis?.addEventListener('voiceschanged', loadVoices);
+    return () => window.speechSynthesis?.removeEventListener('voiceschanged', loadVoices);
+  }, []);
+
+  // 试听语音
+  const handleTestVoice = (voiceUri: string) => {
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance('Hello, this is a test.');
+      const voice = voices.find(v => v.voiceURI === voiceUri);
+      if (voice) {
+        utterance.voice = voice;
+        utterance.lang = voice.lang;
+        setTestVoice(voiceUri);
+        utterance.onend = () => setTestVoice('');
+        window.speechSynthesis.speak(utterance);
+      }
+    }
+  };
 
   const handleClearAll = () => {
     onClearAllData();
@@ -94,6 +125,37 @@ const Settings: React.FC<SettingsProps> = ({
                   className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary"
                 />
               </div>
+
+              {/* 语音选择 */}
+              {voices.length > 0 && (
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-slate-600">朗读语音</span>
+                    <span className="text-xs text-slate-400">共 {voices.length} 个可选</span>
+                  </div>
+                  <select
+                    value={settings.voiceUri || ''}
+                    onChange={(e) => onUpdateSettings({ ...settings, voiceUri: e.target.value || undefined })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 text-sm focus:outline-none focus:border-primary"
+                  >
+                    <option value="">🤖 系统默认</option>
+                    {voices.map(v => (
+                      <option key={v.voiceURI} value={v.voiceURI}>
+                        {v.name} ({v.lang})
+                      </option>
+                    ))}
+                  </select>
+                  {settings.voiceUri && (
+                    <button
+                      onClick={() => handleTestVoice(settings.voiceUri!)}
+                      className="mt-2 text-sm text-primary hover:text-primaryDark flex items-center gap-1"
+                      disabled={!!testVoice}
+                    >
+                      {testVoice === settings.voiceUri ? '🔊 试听中...' : '▶️ 试听当前语音'}
+                    </button>
+                  )}
+                </div>
+              )}
 
               <div className="flex items-center justify-between py-2">
                 <span className="text-slate-600">默认包含错词</span>

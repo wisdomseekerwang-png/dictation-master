@@ -40,6 +40,7 @@ const Dictation: React.FC<DictationProps> = ({
   const [ocrError, setOcrError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isSpeakingRef = useRef(false);
+  const stoppedRef = useRef(false); // 用户主动停止的标记
 
   useEffect(() => {
     return () => {
@@ -62,6 +63,12 @@ const Dictation: React.FC<DictationProps> = ({
       let repeatIndex = 0;
 
       const speak = () => {
+        if (stoppedRef.current) {
+          stoppedRef.current = false;
+          isSpeakingRef.current = false;
+          resolve();
+          return;
+        }
         if (repeatIndex >= repeatCount) {
           isSpeakingRef.current = false;
           resolve();
@@ -80,7 +87,11 @@ const Dictation: React.FC<DictationProps> = ({
 
         utterance.onend = () => {
           repeatIndex++;
-          if (repeatIndex < repeatCount) {
+          if (stoppedRef.current) {
+            stoppedRef.current = false;
+            isSpeakingRef.current = false;
+            resolve();
+          } else if (repeatIndex < repeatCount) {
             setTimeout(speak, 500);
           } else {
             isSpeakingRef.current = false;
@@ -90,7 +101,11 @@ const Dictation: React.FC<DictationProps> = ({
 
         utterance.onerror = () => {
           repeatIndex++;
-          if (repeatIndex < repeatCount) {
+          if (stoppedRef.current) {
+            stoppedRef.current = false;
+            isSpeakingRef.current = false;
+            resolve();
+          } else if (repeatIndex < repeatCount) {
             setTimeout(speak, 500);
           } else {
             isSpeakingRef.current = false;
@@ -128,17 +143,32 @@ const Dictation: React.FC<DictationProps> = ({
 
   // 实际开始听写
   const startActualDictation = useCallback(async () => {
+    stoppedRef.current = false; // 重置停止标记
     setDictationState('dictating');
 
     for (let i = 0; i < words.length; i++) {
+      // 每次循环开始前检查是否已停止
+      if (stoppedRef.current) {
+        return;
+      }
       setCurrentIndex(i);
 
       // 朗读当前词语
       await speakWord(words[i], localSettings.repeatCount, localSettings.speechRate);
 
+      // 检查是否在朗读期间被停止
+      if (stoppedRef.current) {
+        return;
+      }
+
       // 等待间隔
       if (localSettings.intervalTime > 0) {
         await new Promise(resolve => setTimeout(resolve, localSettings.intervalTime * 1000));
+      }
+
+      // 检查是否在间隔期间被停止
+      if (stoppedRef.current) {
+        return;
       }
     }
 
@@ -268,6 +298,7 @@ const Dictation: React.FC<DictationProps> = ({
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
+    stoppedRef.current = true; // 标记停止，防止异步循环继续
     setDictationState('setup');
     setWords([]);
     setCurrentIndex(0);

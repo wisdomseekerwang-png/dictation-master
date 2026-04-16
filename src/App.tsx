@@ -36,6 +36,7 @@ const App: React.FC = () => {
       const serverData = await fetchAllData();
       if (!serverData) {
         setSyncError('无法连接到服务器');
+        setIsSyncing(false);
         return;
       }
 
@@ -44,27 +45,22 @@ const App: React.FC = () => {
         (serverData.wrongWords || []).length > 0 ||
         (serverData.dictationRecords || []).length > 0;
 
-      if (serverHasData) {
-        const merged: AppState = {
-          wordBanks: cleanWordBanks,
-          wrongWords: serverData.wrongWords || [],
-          dictationRecords: serverData.dictationRecords || [],
-          settings: serverData.settings || state.settings,
-        };
-        setState(merged);
-        saveState(merged);
-      }
+      // 最终用于更新本地和上传的数据
+      const finalState: AppState = serverHasData ? {
+        wordBanks: cleanWordBanks,
+        wrongWords: serverData.wrongWords || [],
+        dictationRecords: serverData.dictationRecords || [],
+        settings: serverData.settings || state.settings,
+      } : state;
 
+      // 更新本地状态和 localStorage
+      setState(finalState);
+      saveState(finalState);
       setDailyNewWords(serverData.dailyNewWords || {});
 
-      // 同步到服务器（确保本地最新数据上传）
+      // 上传到服务器（用最终确定的数据，不依赖闭包里的旧 state）
       await saveAllData({
-        ...(serverHasData ? {
-          wordBanks: cleanWordBanks,
-          wrongWords: serverData.wrongWords || [],
-          dictationRecords: serverData.dictationRecords || [],
-          settings: serverData.settings || state.settings,
-        } : state),
+        ...finalState,
         dailyNewWords: serverData.dailyNewWords || {},
       });
     } catch (error) {
@@ -73,7 +69,7 @@ const App: React.FC = () => {
     } finally {
       setIsSyncing(false);
     }
-  }, [state.settings]);
+  }, [state]);
 
   // 初始化时加载一次
   useEffect(() => {
@@ -82,51 +78,53 @@ const App: React.FC = () => {
   }, []);
 
   // 同步状态到服务器
-  const syncToServer = useCallback(async (newState: AppState, newDailyNewWords?: Record<string, string[]>) => {
+  const syncToServer = useCallback(async (newState: AppState, newDailyNewWords: Record<string, string[]>) => {
     saveState(newState);
     try {
       await saveAllData({
         ...newState,
-        dailyNewWords: newDailyNewWords || dailyNewWords,
+        dailyNewWords: newDailyNewWords,
       });
     } catch (error) {
       console.error('Failed to sync to server:', error);
     }
-  }, [dailyNewWords]);
+  }, []);
 
   // 状态变化时同步到服务器
   useEffect(() => {
-    syncToServer(state);
-  }, [state, syncToServer]);
+    syncToServer(state, dailyNewWords);
+  }, [state, dailyNewWords, syncToServer]);
 
   // 更新词库（同时保存每日新词记录）
   const updateWordBanks = useCallback((wordBanks: WordBank[]) => {
     setState(prev => {
       const newState = { ...prev, wordBanks };
       saveState(newState);
-      saveWordBanks(wordBanks);
+      // saveWordBanks 调用不存在的接口，改用 saveAllData
+      saveAllData({ ...newState, dailyNewWords });
       return newState;
     });
-  }, []);
+  }, [dailyNewWords]);
 
   // 更新错词本
   const updateWrongWords = useCallback((wrongWords: WrongWord[]) => {
     setState(prev => {
       const newState = { ...prev, wrongWords };
       saveState(newState);
-      saveWrongWords(wrongWords);
+      saveAllData({ ...newState, dailyNewWords });
       return newState;
     });
-  }, []);
+  }, [dailyNewWords]);
 
   // 更新设置
   const updateSettings = useCallback((settings: DictationSettings) => {
     setState(prev => {
       const newState = { ...prev, settings };
       saveState(newState);
+      saveAllData({ ...newState, dailyNewWords });
       return newState;
     });
-  }, []);
+  }, [dailyNewWords]);
 
   // 添加听写记录
   const addDictationRecord = useCallback((record: DictationRecord) => {
@@ -136,10 +134,10 @@ const App: React.FC = () => {
         dictationRecords: [record, ...prev.dictationRecords].slice(0, 50)
       };
       saveState(newState);
-      saveDictationRecords(newState.dictationRecords);
+      saveAllData({ ...newState, dailyNewWords });
       return newState;
     });
-  }, []);
+  }, [dailyNewWords]);
 
   // 获取今日已听写的新词
   const getTodayDictatedNewWords = useCallback(() => {
@@ -150,8 +148,8 @@ const App: React.FC = () => {
   const recordTodayNewWord = useCallback((word: string) => {
     const newDailyNewWords = addTodayNewWord(dailyNewWords, word);
     setDailyNewWords(newDailyNewWords);
-    saveDailyNewWords(newDailyNewWords);
-  }, [dailyNewWords]);
+    saveAllData({ ...state, dailyNewWords: newDailyNewWords });
+  }, [dailyNewWords, state]);
 
   // 记录今日听写的所有新词
   const recordTodayNewWords = useCallback((words: string[]) => {
@@ -160,8 +158,8 @@ const App: React.FC = () => {
       newDailyNewWords = addTodayNewWord(newDailyNewWords, word);
     });
     setDailyNewWords(newDailyNewWords);
-    saveDailyNewWords(newDailyNewWords);
-  }, [dailyNewWords]);
+    saveAllData({ ...state, dailyNewWords: newDailyNewWords });
+  }, [dailyNewWords, state]);
 
   // 删除记录
   const deleteRecord = useCallback((id: string) => {
@@ -171,28 +169,34 @@ const App: React.FC = () => {
         dictationRecords: prev.dictationRecords.filter(r => r.id !== id)
       };
       saveState(newState);
+      saveAllData({ ...newState, dailyNewWords });
       return newState;
     });
-  }, []);
+  }, [dailyNewWords]);
 
   // 清空历史
   const clearHistory = useCallback(() => {
-    setState(prev => ({
-      ...prev,
-      dictationRecords: []
-    }));
-  }, []);
+    setState(prev => {
+      const newState = { ...prev, dictationRecords: [] };
+      saveState(newState);
+      saveAllData({ ...newState, dailyNewWords });
+      return newState;
+    });
+  }, [dailyNewWords]);
 
   // 清空所有数据
   const clearAllData = useCallback(() => {
-    setState(prev => ({
-      ...prev,
+    const newState = {
+      ...state,
       wordBanks: [],
       wrongWords: [],
-      dictationRecords: []
-    }));
+      dictationRecords: [],
+    };
+    setState(newState);
+    saveState(newState);
     setDailyNewWords({});
-  }, []);
+    saveAllData({ ...newState, dailyNewWords: {} });
+  }, [state, dailyNewWords]);
 
   const getTotalWordCount = useCallback(() => {
     return state.wordBanks.reduce((sum, bank) => sum + bank.wordCount, 0);

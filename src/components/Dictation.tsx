@@ -15,6 +15,43 @@ interface DictationProps {
   onRecordWord: (word: string) => void;
 }
 
+// ============ 全局语音控制器 ============
+// 所有定时器和语音队列都通过这里管理，确保 stop() 能彻底停止一切
+const speechController = {
+  // 唯一的 pending setTimeout ID（只保留一个）
+  timerId: null as ReturnType<typeof setTimeout> | null,
+  shouldStop: false,
+
+  stop() {
+    this.shouldStop = true;
+    // 清除待执行的定时器
+    if (this.timerId !== null) {
+      clearTimeout(this.timerId);
+      this.timerId = null;
+    }
+    // 清空语音队列并暂停
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.pause();
+    }
+  },
+
+  reset() {
+    this.shouldStop = false;
+    this.timerId = null;
+  },
+
+  // 延迟执行，返回是否被 stop 了
+  delay(fn: () => void, ms: number): boolean {
+    this.timerId = setTimeout(() => {
+      this.timerId = null;
+      if (this.shouldStop) return;
+      fn();
+    }, ms) as ReturnType<typeof setTimeout>;
+    return this.shouldStop;
+  },
+};
+
 // 判断词语是中文还是英文
 const isEnglishWord = (word: string): boolean => {
   return /^[a-zA-Z]/.test(word.trim());
@@ -40,31 +77,25 @@ const Dictation: React.FC<DictationProps> = ({
   const [ocrError, setOcrError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isSpeakingRef = useRef(false);
-  const stoppedRef = useRef(false); // 用户主动停止的标记
 
   useEffect(() => {
     return () => {
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
-      }
+      speechController.stop();
     };
   }, []);
 
-  // 播放词语 - 支持中英文
+  // 播放词语 - 使用全局控制器，可靠停止
   const speakWord = useCallback((word: string, repeatCount: number, rate: number): Promise<void> => {
     return new Promise((resolve) => {
       if (!window.speechSynthesis) {
-        console.warn('浏览器不支持语音合成');
         resolve();
         return;
       }
 
-      window.speechSynthesis.cancel();
       let repeatIndex = 0;
 
       const speak = () => {
-        if (stoppedRef.current) {
-          stoppedRef.current = false;
+        if (speechController.shouldStop) {
           isSpeakingRef.current = false;
           resolve();
           return;
@@ -76,23 +107,18 @@ const Dictation: React.FC<DictationProps> = ({
         }
 
         const utterance = new SpeechSynthesisUtterance(word);
-        // 根据词语类型选择语言
-        if (isEnglishWord(word)) {
-          utterance.lang = 'en-US';
-        } else {
-          utterance.lang = 'zh-CN';
-        }
+        utterance.lang = isEnglishWord(word) ? 'en-US' : 'zh-CN';
         utterance.rate = rate;
         utterance.pitch = 1;
 
         utterance.onend = () => {
           repeatIndex++;
-          if (stoppedRef.current) {
-            stoppedRef.current = false;
+          if (speechController.shouldStop) {
             isSpeakingRef.current = false;
             resolve();
           } else if (repeatIndex < repeatCount) {
-            setTimeout(speak, 500);
+            // 使用 controller 的 delay，确保 stop() 能清除
+            speechController.delay(speak, 500);
           } else {
             isSpeakingRef.current = false;
             resolve();
@@ -101,12 +127,11 @@ const Dictation: React.FC<DictationProps> = ({
 
         utterance.onerror = () => {
           repeatIndex++;
-          if (stoppedRef.current) {
-            stoppedRef.current = false;
+          if (speechController.shouldStop) {
             isSpeakingRef.current = false;
             resolve();
           } else if (repeatIndex < repeatCount) {
-            setTimeout(speak, 500);
+            speechController.delay(speak, 500);
           } else {
             isSpeakingRef.current = false;
             resolve();
@@ -143,12 +168,12 @@ const Dictation: React.FC<DictationProps> = ({
 
   // 实际开始听写
   const startActualDictation = useCallback(async () => {
-    stoppedRef.current = false; // 重置停止标记
+    speechController.reset(); // 重置控制器
     setDictationState('dictating');
 
     for (let i = 0; i < words.length; i++) {
       // 每次循环开始前检查是否已停止
-      if (stoppedRef.current) {
+      if (speechController.shouldStop) {
         return;
       }
       setCurrentIndex(i);
@@ -157,17 +182,27 @@ const Dictation: React.FC<DictationProps> = ({
       await speakWord(words[i], localSettings.repeatCount, localSettings.speechRate);
 
       // 检查是否在朗读期间被停止
-      if (stoppedRef.current) {
+      if (speechController.shouldStop) {
         return;
       }
 
       // 等待间隔
       if (localSettings.intervalTime > 0) {
-        await new Promise(resolve => setTimeout(resolve, localSettings.intervalTime * 1000));
+        await new Promise(resolve => {
+          const id = setTimeout(resolve, localSettings.intervalTime * 1000);
+          // 如果在此期间被停止，也清除这个定时器
+          const checkStop = setInterval(() => {
+            if (speechController.shouldStop) {
+              clearTimeout(id);
+              clearInterval(checkStop);
+              resolve(null);
+            }
+          }, 100);
+        });
       }
 
       // 检查是否在间隔期间被停止
-      if (stoppedRef.current) {
+      if (speechController.shouldStop) {
         return;
       }
     }
@@ -295,15 +330,8 @@ const Dictation: React.FC<DictationProps> = ({
 
   // 停止听写
   const handleStop = useCallback(() => {
-    // 先设置停止标记，防止异步循环继续
-    stoppedRef.current = true;
-
-    // 强制停止所有语音：cancel + pause 双保险
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-      // 移动端 Safari 上 cancel 可能是异步的，再调用 pause 确保停止
-      window.speechSynthesis.pause();
-    }
+    // 通过全局控制器彻底停止所有语音和定时器
+    speechController.stop();
 
     // 清空状态
     setWords([]);

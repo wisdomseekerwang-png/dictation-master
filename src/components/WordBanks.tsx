@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { WordBank } from '../types';
 import { createWordBank, parseWords, formatDate } from '../store';
+import { deleteCloudWordBank } from '../api';
 
 interface WordBanksProps {
   wordBanks: WordBank[];
@@ -16,6 +17,9 @@ const WordBanks: React.FC<WordBanksProps> = ({ wordBanks, onUpdateWordBanks, onS
   const [pastedText, setPastedText] = useState('');
   const [selectedBank, setSelectedBank] = useState<WordBank | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 删除确认弹窗
+  const [deleteTarget, setDeleteTarget] = useState<WordBank | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>, fileType: 'txt' | 'pdf') => {
     const file = e.target.files?.[0];
@@ -86,12 +90,24 @@ const WordBanks: React.FC<WordBanksProps> = ({ wordBanks, onUpdateWordBanks, onS
     setPastedText('');
   };
 
-  const handleDeleteBank = (id: string) => {
-    if (confirm('确定要删除这个词库吗？')) {
-      onUpdateWordBanks(wordBanks.filter(b => b.id !== id));
-      if (selectedBank?.id === id) {
+  const handleDeleteBank = (bank: WordBank) => {
+    setDeleteTarget(bank);
+  };
+
+  const doDeleteBank = async (deleteCloud: boolean) => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    try {
+      if (deleteCloud) {
+        await deleteCloudWordBank(deleteTarget.id);
+      }
+      onUpdateWordBanks(wordBanks.filter(b => b.id !== deleteTarget.id));
+      if (selectedBank?.id === deleteTarget.id) {
         setSelectedBank(null);
       }
+    } finally {
+      setIsDeleting(false);
+      setDeleteTarget(null);
     }
   };
 
@@ -172,7 +188,7 @@ const WordBanks: React.FC<WordBanksProps> = ({ wordBanks, onUpdateWordBanks, onS
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleDeleteBank(bank.id);
+                        handleDeleteBank(bank);
                       }}
                       className="ml-2 p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
                     >
@@ -226,6 +242,42 @@ const WordBanks: React.FC<WordBanksProps> = ({ wordBanks, onUpdateWordBanks, onS
           </div>
         )}
       </div>
+
+      {/* 删除确认弹窗 */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 animate-fade-in">
+            <h3 className="text-lg font-semibold text-slate-800 mb-2">删除词库</h3>
+            <p className="text-slate-600 mb-1">
+              确认删除「<span className="font-medium text-slate-800">{deleteTarget.name}</span>」？
+            </p>
+            <p className="text-sm text-slate-400 mb-6">请选择删除范围：</p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => doDeleteBank(true)}
+                disabled={isDeleting}
+                className="w-full py-3 bg-red-500 text-white rounded-xl font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
+              >
+                {isDeleting ? '删除中...' : '🌐 仅本地 + 云端一并删除'}
+              </button>
+              <button
+                onClick={() => doDeleteBank(false)}
+                disabled={isDeleting}
+                className="w-full py-3 bg-slate-100 text-slate-700 rounded-xl font-medium hover:bg-slate-200 transition-colors disabled:opacity-50"
+              >
+                📱 仅删除本地
+              </button>
+              <button
+                onClick={() => setDeleteTarget(null)}
+                disabled={isDeleting}
+                className="w-full py-3 text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 导入弹窗 */}
       {showImportModal && (

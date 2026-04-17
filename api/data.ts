@@ -165,6 +165,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ success: true });
     }
 
+    if (req.method === 'DELETE') {
+      const { id, type } = req.query as { id?: string; type?: string };
+
+      if (!redis) {
+        return res.status(500).json({ success: false, error: 'Redis not configured' });
+      }
+
+      let current: AppData = { ...defaultData };
+      const stored = await redis.get('dictation-master-data');
+      if (stored) {
+        current = safeParse(stored);
+      }
+
+      if (type === 'all') {
+        // 清空全部云端数据
+        await redis.set('dictation-master-data', { ...defaultData });
+        return res.status(200).json({ success: true, message: 'All cloud data cleared' });
+      }
+
+      if (type === 'wordbank' && id) {
+        // 删除指定 id 的词库
+        const updated: AppData = {
+          ...current,
+          wordBanks: current.wordBanks.filter((b: any) => b.id !== id),
+        };
+        await redis.set('dictation-master-data', updated);
+        return res.status(200).json({ success: true, message: `WordBank ${id} deleted` });
+      }
+
+      return res.status(400).json({ success: false, error: 'Missing type or id parameter' });
+    }
+
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   } catch (error) {
     console.error('API Error:', error);

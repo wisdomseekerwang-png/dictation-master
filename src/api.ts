@@ -130,6 +130,22 @@ export async function saveSettings(settings: DictationSettings): Promise<boolean
   return res.success;
 }
 
+// 删除云端指定词库（按 id）
+export async function deleteCloudWordBank(id: string): Promise<boolean> {
+  const res = await apiRequest(`/data?type=wordbank&id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  return res.success;
+}
+
+// 清空全部云端数据
+export async function clearCloudData(): Promise<boolean> {
+  const res = await apiRequest('/data?type=all', {
+    method: 'DELETE',
+  });
+  return res.success;
+}
+
 // ============ 选词逻辑 ============
 
 // 获取今天的日期字符串

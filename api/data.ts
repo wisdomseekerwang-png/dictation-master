@@ -151,7 +151,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (stored) {
           current = safeParse(stored);
         }
-        const merged = { ...current, ...newData };
+        // 合并数据：只上传有效数据，空数组不覆盖云端（保留云端数据）
+        const merged: AppData = {
+          wordBanks: (newData.wordBanks && newData.wordBanks.length > 0) ? newData.wordBanks : current.wordBanks,
+          wrongWords: (newData.wrongWords && newData.wrongWords.length > 0) ? newData.wrongWords : current.wrongWords,
+          dictationRecords: (newData.dictationRecords && newData.dictationRecords.length > 0) ? newData.dictationRecords : current.dictationRecords,
+          settings: newData.settings || current.settings || defaultData.settings,
+          dailyNewWords: { ...current.dailyNewWords, ...newData.dailyNewWords },
+        };
         await redis.set('dictation-master-data', merged);
       }
 

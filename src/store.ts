@@ -47,56 +47,73 @@ export const generateId = (): string => {
 };
 
 export const parseWords = (text: string): string[] => {
-  // 把所有换行转成空格，再统一处理
-  let normalized = text
-    .replace(/\r?\n/g, ' ')   // 换行 -> 空格（合并多行的句子）
-    .replace(/\s+/g, ' ')      // 多个空格合并为一个
-    .trim();
+  // ── 辅助：是否是无效行（空行、纯标题/分类行）
+  const isJunk = (line: string) => {
+    if (!line) return true;
+    if (line.startsWith('{') || line.startsWith('[')) return true;
+    if (line.includes('error_code') || line.includes('processing')) return true;
+    return false;
+  };
 
-  // 检测是否有编号句子格式（如 "1. xxx 2. xxx 3. xxx"）
-  // 句子以 "数字." 开头（如 "1. People decorate..."）
-  const sentencePattern = /^(\d+[.)][^.!?]*[.!?]\s*)+$/;
-  const hasNumberedSentences = /\b\d+[.)]\s*[A-Za-z]/.test(normalized);
-
+  // ── 格式一：编号句子（如 "1. People decorate homes..."）
+  //    整合成一行后按编号分割
+  const singleLine = text.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim();
+  const hasNumberedSentences = /\b\d+[.)]\s*[A-Za-z]/.test(singleLine);
   if (hasNumberedSentences) {
-    // 格式A: 编号句子（如 "1. People decorate homes... 2. New clothes are worn..."）
-    // 按 "数字." 分割
     const sentences: string[] = [];
-    // 匹配 "数字." 作为句子开头
     const regex = /(\d+[.)])\s*([^.!?]*[.!?])/g;
     let match;
-    while ((match = regex.exec(normalized)) !== null) {
+    while ((match = regex.exec(singleLine)) !== null) {
       const sentence = (match[1] + ' ' + match[2].trim()).trim();
       if (sentence.length >= 5 && sentence.length <= 200) {
         sentences.push(sentence);
       }
     }
-    if (sentences.length > 0) {
-      return [...new Set(sentences)];
-    }
+    if (sentences.length > 0) return [...new Set(sentences)];
   }
 
-  // 格式B: 普通句子（中文标点分隔 or 空格分隔的词语）
-  // 把所有中英文标点、空格替换为统一分隔符
-  const segments = normalized
-    .replace(/[，。、！？；,,.!?;]+/g, '\n')  // 标点 -> 换行
-    .replace(/[ \t]+/g, '\n')                 // 空格 -> 换行
+  // ── 格式二：按行分割（每行一个词条）
+  //    适用于：纯中文词、纯英文词、英文（中文）混排、标题行（跳过）
+  const rawLines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+
+  // 判断是否有「每行一词」格式
+  // 特征：存在含括号注释（中文括号或英文括号里有汉字）的行，
+  //       或多行中每行都只有1~2个空格（短词组），且没有连续的纯标点/数字分隔
+  const hasPerLineFormat = rawLines.some(
+    l => /[\(（][^\)）]*[\u4e00-\u9fff][^\)）]*[\)）]/.test(l) ||   // 含（中文）注释
+         /^[a-zA-Z]/.test(l)                                          // 以英文字母开头
+  );
+
+  if (hasPerLineFormat) {
+    const words: string[] = [];
+    for (const line of rawLines) {
+      if (isJunk(line)) continue;
+      // 跳过纯标题行（如 "Natural features（自然景观）" 后面没有括号翻译但本身就是标题）
+      // 判断标准：行内没有英文词组，全为中文+括号 → 可能是分类标题，但也可能是词条
+      // 简单策略：长度 <= 30 的行都保留，太长的标题行（>50）才跳过
+      if (line.length > 50 && !/[\(（]/.test(line)) continue;
+      if (line.length >= 1 && line.length <= 200) {
+        words.push(line);
+      }
+    }
+    if (words.length > 0) return [...new Set(words)];
+  }
+
+  // ── 格式三：标点/空格分隔的纯词语（fallback）
+  const segments = singleLine
+    .replace(/[，。、！？；,,.!?;]+/g, '\n')
+    .replace(/[ \t]+/g, '\n')
     .split('\n')
     .map(l => l.trim())
     .filter(l => l.length > 0);
 
   const words: string[] = [];
   for (const line of segments) {
-    // 跳过明显是错误信息或 JSON 的行
-    if (line.startsWith('{') || line.startsWith('[') ||
-        line.includes('error_code') || line.includes('processing')) {
-      continue;
-    }
+    if (isJunk(line)) continue;
     if (line.length >= 1 && line.length <= 200) {
       words.push(line);
     }
   }
-
   return [...new Set(words)];
 };
 

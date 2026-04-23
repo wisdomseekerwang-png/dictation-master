@@ -63,6 +63,27 @@ const isEnglishWord = (word: string): boolean => {
   return /^[a-zA-Z]/.test(word.trim());
 };
 
+// 将中英混排词拆成 [英文部分, 中文部分]
+// 例：「a coral reef（珊瑚礁）」→ ['a coral reef', '珊瑚礁']
+//     「a coral reef(coral reef)」→ ['a coral reef', 'coral reef']（括号内英文只读一次，略过）
+//     「珊瑚礁」→ ['珊瑚礁']
+const splitBilingual = (word: string): string[] => {
+  // 匹配括号（中英文括号均支持）
+  const bracketMatch = word.match(/^(.*?)[\(（]([^\)）]+)[\)）]\s*$/);
+  if (bracketMatch) {
+    const before = bracketMatch[1].trim();   // 括号前的部分
+    const inside = bracketMatch[2].trim();   // 括号内的部分
+    const parts: string[] = [];
+    if (before.length > 0) parts.push(before);
+    // 括号内有汉字才加入朗读（纯英文注释不重复读）
+    if (/[\u4e00-\u9fff]/.test(inside) && inside.length > 0) {
+      parts.push(inside);
+    }
+    if (parts.length > 0) return parts;
+  }
+  return [word];
+};
+
 // 为词语选择最优语音
 const pickBestVoice = (word: string, voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null => {
   const langCode = isEnglishWord(word) ? 'en' : 'zh';
@@ -108,7 +129,7 @@ const Dictation: React.FC<DictationProps> = ({
     };
   }, []);
 
-  // 播放词语 - 使用全局控制器，可靠停止
+  // 播放词语 - 支持中英混排（先读英文，再读中文翻译）
   const speakWord = useCallback((word: string, repeatCount: number, rate: number): Promise<void> => {
     return new Promise((resolve) => {
       if (!window.speechSynthesis) {
@@ -116,80 +137,95 @@ const Dictation: React.FC<DictationProps> = ({
         return;
       }
 
-      let repeatIndex = 0;
+      // 将词条拆成若干段（中英混排时拆开）
+      const parts = splitBilingual(word);
 
-      const speak = () => {
-        if (speechController.shouldStop) {
+      // 依次朗读每个 part，每个 part 重复 repeatCount 次
+      let partIndex = 0;
+
+      const speakPart = () => {
+        if (speechController.shouldStop || partIndex >= parts.length) {
           isSpeakingRef.current = false;
           resolve();
           return;
         }
-        if (repeatIndex >= repeatCount) {
-          isSpeakingRef.current = false;
-          resolve();
-          return;
-        }
 
-        const utterance = new SpeechSynthesisUtterance(word);
-        utterance.lang = isEnglishWord(word) ? 'en-US' : 'zh-CN';
-        utterance.rate = rate;
-        utterance.pitch = 1;
+        const currentPart = parts[partIndex];
+        let repeatIndex = 0;
 
-        // 尝试选择最优语音
-        if (window.speechSynthesis) {
-          const voices = window.speechSynthesis.getVoices();
-          if (voices.length > 0) {
-            // 优先用用户选择的语音
-            if (settings.voiceUri) {
-              const selected = voices.find(v => v.voiceURI === settings.voiceUri);
-              if (selected) {
-                utterance.voice = selected;
+        const speak = () => {
+          if (speechController.shouldStop) {
+            isSpeakingRef.current = false;
+            resolve();
+            return;
+          }
+          if (repeatIndex >= repeatCount) {
+            // 当前 part 朗读完毕，切换到下一 part（部分之间停顿 500ms）
+            partIndex++;
+            speechController.delay(speakPart, 500);
+            return;
+          }
+
+          const utterance = new SpeechSynthesisUtterance(currentPart);
+          utterance.lang = isEnglishWord(currentPart) ? 'en-US' : 'zh-CN';
+          utterance.rate = rate;
+          utterance.pitch = 1;
+
+          // 选择最优语音
+          if (window.speechSynthesis) {
+            const voices = window.speechSynthesis.getVoices();
+            if (voices.length > 0) {
+              if (settings.voiceUri) {
+                const selected = voices.find(v => v.voiceURI === settings.voiceUri);
+                if (selected) {
+                  utterance.voice = selected;
+                } else {
+                  const best = pickBestVoice(currentPart, voices);
+                  if (best) utterance.voice = best;
+                }
               } else {
-                // 回退到最优语音
-                const best = pickBestVoice(word, voices);
+                const best = pickBestVoice(currentPart, voices);
                 if (best) utterance.voice = best;
               }
-            } else {
-              const best = pickBestVoice(word, voices);
-              if (best) utterance.voice = best;
             }
           }
-        }
 
-        utterance.onend = () => {
-          repeatIndex++;
-          if (speechController.shouldStop) {
-            isSpeakingRef.current = false;
-            resolve();
-          } else if (repeatIndex < repeatCount) {
-            // 使用 controller 的 delay，确保 stop() 能清除
-            speechController.delay(speak, 500);
-          } else {
-            isSpeakingRef.current = false;
-            resolve();
-          }
+          utterance.onend = () => {
+            repeatIndex++;
+            if (speechController.shouldStop) {
+              isSpeakingRef.current = false;
+              resolve();
+            } else if (repeatIndex < repeatCount) {
+              speechController.delay(speak, 500);
+            } else {
+              partIndex++;
+              speechController.delay(speakPart, 500);
+            }
+          };
+
+          utterance.onerror = () => {
+            repeatIndex++;
+            if (speechController.shouldStop) {
+              isSpeakingRef.current = false;
+              resolve();
+            } else if (repeatIndex < repeatCount) {
+              speechController.delay(speak, 500);
+            } else {
+              partIndex++;
+              speechController.delay(speakPart, 500);
+            }
+          };
+
+          isSpeakingRef.current = true;
+          window.speechSynthesis.speak(utterance);
         };
 
-        utterance.onerror = () => {
-          repeatIndex++;
-          if (speechController.shouldStop) {
-            isSpeakingRef.current = false;
-            resolve();
-          } else if (repeatIndex < repeatCount) {
-            speechController.delay(speak, 500);
-          } else {
-            isSpeakingRef.current = false;
-            resolve();
-          }
-        };
-
-        isSpeakingRef.current = true;
-        window.speechSynthesis.speak(utterance);
+        speak();
       };
 
-      speak();
+      speakPart();
     });
-  }, []);
+  }, [settings.voiceUri]);
 
   // 开始听写
   const handleStartDictation = useCallback(async () => {

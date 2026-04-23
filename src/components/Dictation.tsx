@@ -129,7 +129,8 @@ const Dictation: React.FC<DictationProps> = ({
     };
   }, []);
 
-  // 播放词语 - 支持中英混排（先读英文，再读中文翻译）
+  // 播放词语 - 支持中英混排
+  // 朗读顺序：[英文 → 停顿500ms → 中文] 整组重复 repeatCount 次
   const speakWord = useCallback((word: string, repeatCount: number, rate: number): Promise<void> => {
     return new Promise((resolve) => {
       if (!window.speechSynthesis) {
@@ -140,38 +141,15 @@ const Dictation: React.FC<DictationProps> = ({
       // 将词条拆成若干段（中英混排时拆开）
       const parts = splitBilingual(word);
 
-      // 依次朗读每个 part，每个 part 重复 repeatCount 次
-      let partIndex = 0;
-
-      const speakPart = () => {
-        if (speechController.shouldStop || partIndex >= parts.length) {
-          isSpeakingRef.current = false;
-          resolve();
-          return;
-        }
-
-        const currentPart = parts[partIndex];
-        let repeatIndex = 0;
-
-        const speak = () => {
-          if (speechController.shouldStop) {
-            isSpeakingRef.current = false;
-            resolve();
-            return;
-          }
-          if (repeatIndex >= repeatCount) {
-            // 当前 part 朗读完毕，切换到下一 part（部分之间停顿 500ms）
-            partIndex++;
-            speechController.delay(speakPart, 500);
-            return;
-          }
-
-          const utterance = new SpeechSynthesisUtterance(currentPart);
-          utterance.lang = isEnglishWord(currentPart) ? 'en-US' : 'zh-CN';
+      // 辅助：朗读单个 utterance，返回 Promise
+      const speakUtterance = (text: string): Promise<void> => {
+        return new Promise((res) => {
+          if (speechController.shouldStop) { res(); return; }
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = isEnglishWord(text) ? 'en-US' : 'zh-CN';
           utterance.rate = rate;
           utterance.pitch = 1;
 
-          // 选择最优语音
           if (window.speechSynthesis) {
             const voices = window.speechSynthesis.getVoices();
             if (voices.length > 0) {
@@ -180,50 +158,62 @@ const Dictation: React.FC<DictationProps> = ({
                 if (selected) {
                   utterance.voice = selected;
                 } else {
-                  const best = pickBestVoice(currentPart, voices);
+                  const best = pickBestVoice(text, voices);
                   if (best) utterance.voice = best;
                 }
               } else {
-                const best = pickBestVoice(currentPart, voices);
+                const best = pickBestVoice(text, voices);
                 if (best) utterance.voice = best;
               }
             }
           }
 
-          utterance.onend = () => {
-            repeatIndex++;
-            if (speechController.shouldStop) {
-              isSpeakingRef.current = false;
-              resolve();
-            } else if (repeatIndex < repeatCount) {
-              speechController.delay(speak, 500);
-            } else {
-              partIndex++;
-              speechController.delay(speakPart, 500);
-            }
-          };
-
-          utterance.onerror = () => {
-            repeatIndex++;
-            if (speechController.shouldStop) {
-              isSpeakingRef.current = false;
-              resolve();
-            } else if (repeatIndex < repeatCount) {
-              speechController.delay(speak, 500);
-            } else {
-              partIndex++;
-              speechController.delay(speakPart, 500);
-            }
-          };
-
+          utterance.onend = () => res();
+          utterance.onerror = () => res();
           isSpeakingRef.current = true;
           window.speechSynthesis.speak(utterance);
-        };
-
-        speak();
+        });
       };
 
-      speakPart();
+      // 朗读一整组（所有 parts，中间停顿 500ms）
+      const speakOneRound = (cb: () => void) => {
+        if (speechController.shouldStop) { cb(); return; }
+        let i = 0;
+        const next = () => {
+          if (speechController.shouldStop || i >= parts.length) { cb(); return; }
+          speakUtterance(parts[i]).then(() => {
+            i++;
+            if (i < parts.length) {
+              speechController.delay(next, 500); // part 之间停顿 500ms
+            } else {
+              cb();
+            }
+          });
+        };
+        next();
+      };
+
+      // 重复 repeatCount 次（每次整组，组间由调用方的 wordInterval 控制）
+      let round = 0;
+      const nextRound = () => {
+        if (speechController.shouldStop || round >= repeatCount) {
+          isSpeakingRef.current = false;
+          resolve();
+          return;
+        }
+        speakOneRound(() => {
+          round++;
+          if (round < repeatCount) {
+            // 同一词的两次重复之间停顿 500ms
+            speechController.delay(nextRound, 500);
+          } else {
+            isSpeakingRef.current = false;
+            resolve();
+          }
+        });
+      };
+
+      nextRound();
     });
   }, [settings.voiceUri]);
 
